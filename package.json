@@ -1,0 +1,32 @@
+{
+  "name": "nano-banana",
+  "version": "1.0.0",
+  "description": "AI image generation CLI powered by Gemini 3 Pro. Green screen transparency, reference images, style transfer.",
+  "type": "module",
+  "bin": {
+    "nano-banana": "./src/cli.ts"
+  },
+  "scripts": {
+    "start": "bun run src/cli.ts",
+    "dev": "bun run src/cli.ts"
+  },
+  "keywords": [
+    "ai",
+    "image-generation",
+    "gemini",
+    "pixel-art",
+    "cli",
+    "green-screen",
+    "chroma-key",
+    "style-transfer",
+    "claude-code"
+  ],
+  "author": {
+    "name": "Bootoshi",
+    "url": "https://github.com/kingbootoshi"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@google/genai": "^1.34.0"
+  }
+}
