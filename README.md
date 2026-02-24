@@ -1,4 +1,4 @@
-# Nano Banana
+# Nano Banana Pro Skill
 
 AI image generation CLI powered by Gemini 3 Pro Image Preview. Generates high-quality 2K images from text prompts with reference image support, broadcast-grade green screen transparency, and style transfer.
 
@@ -10,8 +10,8 @@ Also ships as a [Claude Code](https://docs.anthropic.com/en/docs/claude-code) sk
 
 ```bash
 # Clone the repo
-git clone https://github.com/kingbootoshi/nano-banana.git
-cd nano-banana
+git clone https://github.com/kingbootoshi/nano-banana-pro-skill.git
+cd nano-banana-pro-skill
 
 # Install dependencies
 bun install
@@ -27,7 +27,7 @@ sudo ln -sf "$(pwd)/src/cli.ts" /usr/local/bin/nano-banana
 ### As a Claude Code Plugin
 
 ```
-/plugin marketplace add kingbootoshi/nano-banana
+/plugin marketplace add kingbootoshi/nano-banana-pro-skill
 /plugin install nano-banana
 ```
 
