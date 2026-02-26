@@ -56,9 +56,7 @@ Get a Gemini API key at: https://aistudio.google.com/apikey
 | `-m, --model` | `flash` | Model: `flash`/`nb2`, `pro`/`nb-pro`, or any model ID |
 | `-d, --dir` | current directory | Output directory |
 | `-r, --ref` | - | Reference image (can use multiple times) |
-| `-t, --transparent` | - | Remove chroma key background |
-| `--chroma` | `#00FF00` | Color to remove with -t |
-| `--fuzz` | `10` | Color tolerance % |
+| `-t, --transparent` | - | Remove background (AI-powered, any color) |
 | `--api-key` | - | Gemini API key (overrides env/file) |
 | `--costs` | - | Show cost summary |
 
@@ -114,25 +112,16 @@ nano-banana "change the background to pure white" -r dark-ui.png -o light-ui
 nano-banana "combine these two styles" -r style1.png -r style2.png -o combined
 ```
 
-### Transparent Assets (Green Screen)
+### Transparent Assets
 
 ```bash
-nano-banana "robot mascot on solid neon green background #00FF00" -t -o mascot
+nano-banana "robot mascot character" -t -o mascot
+nano-banana "pixel art treasure chest" -t -o chest
 ```
 
-Prompt tips for clean transparency:
-- "on solid neon green background"
-- "green screen background #00FF00"
-- "uniform green, sharp edges, no shadows on background"
+No green screen prompting needed. The `-t` flag uses AI-powered background removal (withoutbg) + ImageMagick edge cleanup for pixel-perfect transparency. Works with any background color.
 
-The chroma key pipeline is broadcast-grade:
-1. Auto-detects actual background color via K-means clustering
-2. Builds soft matte using color difference (handles edge mixing)
-3. Refines matte with morphological operations
-4. Unmixes/unpremultiplies edge colors to remove green halos
-5. Despills remaining green tint from edges
-6. Applies refined alpha for clean transparency
-7. Falls back to simple fuzz method if advanced pipeline fails
+Requires: `pip install withoutbg` (first run downloads ~318MB of AI models, then works offline).
 
 ### Exact Dimensions
 

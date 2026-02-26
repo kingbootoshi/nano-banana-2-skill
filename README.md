@@ -6,7 +6,7 @@ Also ships as a [Claude Code](https://docs.anthropic.com/en/docs/claude-code) sk
 
 ## Install
 
-**Requirements:** [Bun](https://bun.sh), [ImageMagick](https://imagemagick.org) (for transparent mode)
+**Requirements:** [Bun](https://bun.sh), [withoutbg](https://github.com/withoutbg/withoutbg) + [ImageMagick](https://imagemagick.org) (for transparent mode)
 
 ```bash
 # Clone the repo
@@ -114,22 +114,22 @@ nano-banana "combine these two UI styles into one" -r style1.png -r style2.png -
 nano-banana "make this image more vibrant and increase contrast" -r photo.jpg
 ```
 
-### Transparent Assets (Green Screen)
+### Transparent Assets
 
-Generate assets with transparent backgrounds using a broadcast-grade chroma key pipeline:
+Generate assets with transparent backgrounds using AI-powered background removal:
 
 ```bash
 # Basic transparent asset
-nano-banana "robot mascot character on solid neon green background #00FF00" -t -o mascot
+nano-banana "robot mascot character" -t -o mascot
 
 # Logo with transparency
-nano-banana "minimalist tech logo on bright green screen background" -t -o logo
+nano-banana "minimalist tech logo" -t -o logo
+
+# Game asset
+nano-banana "pixel art treasure chest" -t -o chest
 ```
 
-**Prompt tips for clean edges:**
-- "on solid neon green background"
-- "green screen background #00FF00"
-- "uniform green, sharp edges, no shadows on background"
+Uses [withoutbg](https://github.com/withoutbg/withoutbg) (4-model AI pipeline) + ImageMagick post-processing for pixel-perfect edges. Works with any background color - no green screen needed. Install: `pip install withoutbg` (first run downloads ~318MB of models, then works offline).
 
 ### Exact Dimensions
 
@@ -151,9 +151,7 @@ nano-banana "pixel art character, 256x256" -r style.png -r blank-256x256.png -o 
 | `-m, --model` | `flash` | Model: `flash`/`nb2`, `pro`/`nb-pro`, or any model ID |
 | `-d, --dir` | current directory | Output directory |
 | `-r, --ref` | - | Reference image (can use multiple times) |
-| `-t, --transparent` | - | Remove chroma key background |
-| `--chroma` | `#00FF00` | Color to remove when using -t |
-| `--fuzz` | `10` | Color tolerance % (higher = more lenient) |
+| `-t, --transparent` | - | Remove background (AI-powered, any color) |
 | `--api-key` | - | Gemini API key (overrides env/file) |
 | `--costs` | - | Show cost summary from generation history |
 | `-h, --help` | - | Show help |
@@ -204,19 +202,15 @@ echo "GEMINI_API_KEY=your_key_here" > ~/.nano-banana/.env
 nano-banana "your prompt" --api-key your_key_here
 ```
 
-## How the Green Screen Pipeline Works
+## How Transparent Mode Works
 
-AI image generators cannot output true transparency - they render checkered patterns onto the image. Instead, we use a professional green screen workflow:
+The `-t` flag uses a 3-step pipeline for pixel-perfect background removal:
 
-1. **Prompt for green background** - ask for "solid neon green background #00FF00"
-2. **Auto-detect actual color** - K-means clustering on corner pixels finds the real shade (AI rarely generates exact #00FF00)
-3. **Build soft matte** - color difference compositing creates continuous alpha, handling edge mixing
-4. **Refine matte** - morphological close/open operations fill holes and remove specks
-5. **Unmix edges** - formula `v==0 ? 0 : u/v - KEY/v + KEY` recovers original edge colors buried under green
-6. **Despill** - green channel limiter `g > (r+b)/2 ? (r+b)/2 : g` removes remaining green tint
-7. **Apply alpha** - composite refined alpha onto despilled image
+1. **AI removal** - [withoutbg](https://github.com/withoutbg/withoutbg) runs 4 neural networks (Depth Anything V2, ISNet segmentation, Focus matting, Focus refiner) to produce a high-quality alpha mask
+2. **Edge cleanup** - ImageMagick erodes the alpha by 1 pixel (Diamond kernel) to shave off fringe, then thresholds to binary (no semi-transparent pixels)
+3. **Auto-crop** - trims transparent padding and resets canvas
 
-Falls back to simple fuzz + erosion if the advanced pipeline encounters issues.
+No green screen prompting needed. Works with any background color. First run downloads ~318MB of models from HuggingFace, then runs fully offline.
 
 ## Use Cases
 

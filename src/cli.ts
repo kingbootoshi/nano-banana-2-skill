@@ -88,8 +88,6 @@ interface Options {
   outputDir: string;
   referenceImages: string[];
   transparent: boolean;
-  chromaColor: string;
-  fuzz: number;
   apiKey: string | undefined;
   model: string;
   aspectRatio: string | undefined;
@@ -140,9 +138,9 @@ async function loadImageAsBase64(
   };
 }
 
-function runMagick(args: string[]): Promise<string> {
+function runCommand(cmd: string, args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
-    const proc = spawn("magick", args);
+    const proc = spawn(cmd, args);
     let stdout = "";
     let stderr = "";
     proc.stdout.on("data", (data) => {
@@ -153,16 +151,20 @@ function runMagick(args: string[]): Promise<string> {
     });
     proc.on("close", (code) => {
       if (code === 0) resolve(stdout.trim());
-      else reject(new Error(`ImageMagick failed: ${stderr}`));
+      else reject(new Error(`${cmd} failed (exit ${code}): ${stderr}`));
     });
     proc.on("error", (err) => {
       reject(
         new Error(
-          `Failed to run ImageMagick: ${err.message}. Is it installed? (brew install imagemagick)`
+          `Failed to run ${cmd}: ${err.message}. Is it installed?`
         )
       );
     });
   });
+}
+
+function runMagick(args: string[]): Promise<string> {
+  return runCommand("magick", args);
 }
 
 function resolveModel(input: string): string {
@@ -254,142 +256,53 @@ function calculateCost(
 }
 
 // ---------------------------------------------------------------------------
-// Chroma key removal - broadcast-grade pipeline
+// Background removal - withoutbg AI + ImageMagick post-processing
 // ---------------------------------------------------------------------------
 
-async function removeChromaKey(
-  inputPath: string,
-  chromaColor: string,
-  fuzz: number
-): Promise<string> {
+async function removeBackground(inputPath: string): Promise<string> {
   const dir = inputPath.substring(0, inputPath.lastIndexOf("/"));
   const name = basename(inputPath, extname(inputPath));
   const outputPath = join(dir, `${name}.png`);
-
-  const tempAlpha = join(dir, `${name}_alpha.png`);
-  const tempAlphaRef = join(dir, `${name}_alpha_ref.png`);
+  const tempRembg = join(dir, `${name}_rembg.png`);
 
   const cleanup = async () => {
     const { unlink } = await import("fs/promises");
-    await Promise.all([
-      unlink(tempAlpha).catch(() => {}),
-      unlink(tempAlphaRef).catch(() => {}),
-    ]);
+    await unlink(tempRembg).catch(() => {});
   };
 
   try {
-    // Step 1: Auto-detect the actual background color from corner patch.
-    // AI-generated greens are rarely exactly #00FF00.
-    let keyColor = chromaColor;
-    try {
-      const detected = await runMagick([
-        inputPath,
-        "-gravity",
-        "NorthWest",
-        "-crop",
-        "10%x10%+0+0",
-        "+repage",
-        "-kmeans",
-        "3",
-        "-format",
-        "%[dominant-color]",
-        "info:",
-      ]);
-      if (detected && detected.startsWith("#")) {
-        keyColor = detected;
-        console.log(`  \x1b[90mDetected background: ${keyColor}\x1b[0m`);
-      }
-    } catch {
-      // Fallback: sample top-left pixel
-      const pixel = await runMagick([
-        inputPath,
-        "-format",
-        "%[hex:p{0,0}]",
-        "info:",
-      ]);
-      if (pixel) {
-        keyColor = `#${pixel}`;
-        console.log(`  \x1b[90mSampled background: ${keyColor}\x1b[0m`);
-      }
-    }
+    // Step 1: AI background removal with withoutbg (4-model pipeline)
+    console.log(`  \x1b[90mRunning AI background removal...\x1b[0m`);
+    await runCommand("withoutbg", [inputPath, "-o", tempRembg]);
 
-    // Step 2: Build soft matte using color difference
+    // Step 2: Erode alpha by 1px to shave off fringe, then threshold
+    // to binary (no semi-transparent pixels), then auto-crop
+    console.log(`  \x1b[90mCleaning edges...\x1b[0m`);
     await runMagick([
-      inputPath,
-      "-alpha",
-      "off",
-      "(",
-      "+clone",
-      "-fill",
-      keyColor,
-      "-colorize",
-      "100%",
-      ")",
-      "-compose",
-      "difference",
-      "-composite",
-      "-separate",
-      "-evaluate-sequence",
-      "max",
-      "-auto-level",
-      "-blur",
-      "0x1",
-      "-level",
-      "5%,95%",
-      tempAlpha,
-    ]);
-
-    // Step 3: Refine matte with morphology (close holes, open specks, feather)
-    await runMagick([
-      tempAlpha,
-      "-morphology",
-      "Close",
-      "Diamond:1",
-      "-morphology",
-      "Open",
-      "Diamond:1",
-      "-blur",
-      "0x0.7",
-      tempAlphaRef,
-    ]);
-
-    // Step 4: Apply refined alpha directly to original image
-    // Skip unmix/despill - those formulas corrupt non-green foreground colors
-    // (brown wood becomes pink/magenta because despill crushes green channel in warm tones)
-    await runMagick([
-      inputPath,
-      tempAlphaRef,
-      "-alpha", "off",
-      "-compose",
-      "CopyOpacity",
-      "-composite",
+      tempRembg,
+      "-channel", "A",
+      "-morphology", "Erode", "Diamond:1",
+      "-threshold", "50%",
+      "+channel",
+      "-trim", "+repage",
       outputPath,
     ]);
 
     await cleanup();
     return outputPath;
   } catch (err) {
-    // Fallback: simple fuzz method + edge erosion
-    console.log(
-      `\x1b[33m  Advanced pipeline failed, using fallback...\x1b[0m`
-    );
     await cleanup();
+    const msg = err instanceof Error ? err.message : String(err);
 
-    await runMagick([
-      inputPath,
-      "-fuzz",
-      `${fuzz}%`,
-      "-transparent",
-      chromaColor,
-      "-channel",
-      "A",
-      "-morphology",
-      "Erode",
-      "Diamond:1",
-      "+channel",
-      outputPath,
-    ]);
-    return outputPath;
+    // Check if withoutbg is not installed
+    if (msg.includes("Failed to run withoutbg") || msg.includes("ENOENT")) {
+      console.error(`\x1b[31m  withoutbg not found.\x1b[0m`);
+      console.error(`  Install it: pip install withoutbg`);
+      console.error(`  First run downloads ~318MB of AI models, then works offline.`);
+      throw new Error("withoutbg is required for transparent mode. Install: pip install withoutbg");
+    }
+
+    throw err;
   }
 }
 
@@ -419,9 +332,7 @@ Default: Gemini 3.1 Flash Image Preview (Nano Banana 2)
   -m, --model       Model: flash/nb2, pro/nb-pro, or any model ID [default: flash]
   -d, --dir         Output directory [default: current directory]
   -r, --ref         Reference image(s) - can use multiple times
-  -t, --transparent Remove chroma key background (neon green by default)
-  --chroma          Chroma key color to remove [default: #00FF00]
-  --fuzz            Color tolerance percentage [default: 10]
+  -t, --transparent Remove background (AI-powered, works with any color)
   --api-key         Gemini API key (overrides env/file)
   --costs           Show cost summary from generation history
   -h, --help        Show this help
@@ -449,9 +360,9 @@ Default: Gemini 3.1 Flash Image Preview (Nano Banana 2)
   nano-banana "highest quality portrait" --model pro -a 9:16
 
 \x1b[33mTransparent Assets:\x1b[0m
-  nano-banana "robot mascot on solid neon green background" -t
-  nano-banana "product icon, green screen background #00FF00" --transparent
-  nano-banana "logo design on bright green" -t --fuzz 15
+  nano-banana "robot mascot character" -t
+  nano-banana "product icon on white background" --transparent
+  nano-banana "pixel art treasure chest" -t -o chest
 
 \x1b[33mCost Tracking:\x1b[0m
   nano-banana --costs    Show total spend and per-model breakdown
@@ -475,8 +386,6 @@ Default: Gemini 3.1 Flash Image Preview (Nano Banana 2)
     outputDir: process.cwd(),
     referenceImages: [],
     transparent: false,
-    chromaColor: "#00FF00",
-    fuzz: 10,
     apiKey: undefined,
     model: DEFAULT_MODEL,
     aspectRatio: undefined,
@@ -512,10 +421,6 @@ Default: Gemini 3.1 Flash Image Preview (Nano Banana 2)
       options.referenceImages.push(args[++i]);
     } else if (arg === "-t" || arg === "--transparent") {
       options.transparent = true;
-    } else if (arg === "--chroma") {
-      options.chromaColor = args[++i];
-    } else if (arg === "--fuzz") {
-      options.fuzz = parseInt(args[++i], 10);
     } else if (arg === "--api-key") {
       options.apiKey = args[++i];
     } else if (!arg.startsWith("-")) {
@@ -706,17 +611,13 @@ generateImage(options)
 
     if (options.transparent) {
       console.log(
-        `\n\x1b[36m[nano-banana]\x1b[0m Removing ${options.chromaColor} background...`
+        `\n\x1b[36m[nano-banana]\x1b[0m Removing background...`
       );
       const processedFiles: string[] = [];
 
       for (const file of files) {
         try {
-          const outputPath = await removeChromaKey(
-            file,
-            options.chromaColor,
-            options.fuzz
-          );
+          const outputPath = await removeBackground(file);
           processedFiles.push(outputPath);
           console.log(`  \x1b[32m+\x1b[0m Transparent: ${outputPath}`);
         } catch (err) {
