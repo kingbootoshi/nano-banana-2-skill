@@ -1,13 +1,16 @@
 #!/usr/bin/env bun
 /**
- * Nano Banana - AI Image Generation CLI
- * Powered by Gemini 3 Pro Image Preview
+ * Nano Banana 2 - AI Image Generation CLI
+ * Default: Gemini 3.1 Flash Image Preview (Nano Banana 2)
+ * Also supports: Gemini 3 Pro Image Preview (Nano Banana Pro) and any model ID
  *
  * Usage:
  *   nano-banana "your prompt here"
  *   nano-banana "your prompt" --output myimage
  *   nano-banana "your prompt" --ref image.png        # Use reference image
  *   nano-banana "your prompt" -r img1.png -r img2.png # Multiple references
+ *   nano-banana "your prompt" --model pro             # Use Pro model
+ *   nano-banana "your prompt" -a 16:9                 # Set aspect ratio
  */
 
 import { GoogleGenAI } from "@google/genai";
@@ -48,19 +51,59 @@ loadEnvFile(join(__dirname, "..", ".env"));         // repo root .env
 loadEnvFile(join(homedir(), ".nano-banana", ".env"));
 
 // ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+const MODEL_ALIASES: Record<string, string> = {
+  flash: "gemini-3.1-flash-image-preview",
+  nb2: "gemini-3.1-flash-image-preview",
+  pro: "gemini-3-pro-image-preview",
+  "nb-pro": "gemini-3-pro-image-preview",
+};
+
+const DEFAULT_MODEL = "gemini-3.1-flash-image-preview";
+
+const VALID_SIZES = ["512", "1K", "2K", "4K"] as const;
+type ImageSize = (typeof VALID_SIZES)[number];
+
+const VALID_ASPECTS = [
+  "1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3",
+  "4:5", "5:4", "21:9", "1:4", "1:8", "4:1", "8:1",
+] as const;
+
+// Cost rates per 1M tokens
+const COST_RATES: Record<string, { input: number; imageOutput: number }> = {
+  "gemini-3.1-flash-image-preview": { input: 0.25, imageOutput: 60 },
+  "gemini-3-pro-image-preview": { input: 2.0, imageOutput: 120 },
+};
+
+// ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
 interface Options {
   prompt: string;
   output: string;
-  size: "1K" | "2K";
+  size: ImageSize;
   outputDir: string;
   referenceImages: string[];
   transparent: boolean;
   chromaColor: string;
   fuzz: number;
   apiKey: string | undefined;
+  model: string;
+  aspectRatio: string | undefined;
+}
+
+interface CostEntry {
+  timestamp: string;
+  model: string;
+  size: string;
+  aspect: string | null;
+  prompt_tokens: number;
+  output_tokens: number;
+  estimated_cost: number;
+  output_file: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -122,6 +165,94 @@ function runMagick(args: string[]): Promise<string> {
   });
 }
 
+function resolveModel(input: string): string {
+  return MODEL_ALIASES[input.toLowerCase()] || input;
+}
+
+// ---------------------------------------------------------------------------
+// Cost tracking
+// ---------------------------------------------------------------------------
+
+const COST_LOG_PATH = join(homedir(), ".nano-banana", "costs.json");
+
+async function logCost(entry: CostEntry): Promise<void> {
+  const dir = dirname(COST_LOG_PATH);
+  if (!existsSync(dir)) {
+    await mkdir(dir, { recursive: true });
+  }
+
+  let entries: CostEntry[] = [];
+  if (existsSync(COST_LOG_PATH)) {
+    try {
+      const raw = await readFile(COST_LOG_PATH, "utf-8");
+      entries = JSON.parse(raw);
+    } catch {
+      entries = [];
+    }
+  }
+
+  entries.push(entry);
+  await writeFile(COST_LOG_PATH, JSON.stringify(entries, null, 2));
+}
+
+function printCostSummary(): void {
+  if (!existsSync(COST_LOG_PATH)) {
+    console.log("\x1b[90mNo cost data found.\x1b[0m");
+    return;
+  }
+
+  let entries: CostEntry[];
+  try {
+    entries = JSON.parse(readFileSync(COST_LOG_PATH, "utf-8"));
+  } catch {
+    console.log("\x1b[31mError reading cost log.\x1b[0m");
+    return;
+  }
+
+  if (entries.length === 0) {
+    console.log("\x1b[90mNo generations logged yet.\x1b[0m");
+    return;
+  }
+
+  let totalCost = 0;
+  const byModel: Record<string, { count: number; cost: number }> = {};
+
+  for (const e of entries) {
+    totalCost += e.estimated_cost;
+    const m = e.model;
+    if (!byModel[m]) byModel[m] = { count: 0, cost: 0 };
+    byModel[m].count++;
+    byModel[m].cost += e.estimated_cost;
+  }
+
+  console.log(`\x1b[36m[nano-banana]\x1b[0m Cost Summary`);
+  console.log(`\x1b[90m${"─".repeat(50)}\x1b[0m`);
+  console.log(`  Total generations: ${entries.length}`);
+  console.log(`  Total cost:        \x1b[33m$${totalCost.toFixed(4)}\x1b[0m`);
+  console.log("");
+
+  for (const [model, data] of Object.entries(byModel)) {
+    const shortName = model.includes("flash") ? "Nano Banana 2 (Flash)" : model.includes("pro") ? "Nano Banana Pro" : model;
+    console.log(`  ${shortName}`);
+    console.log(`    Generations: ${data.count}`);
+    console.log(`    Cost:        $${data.cost.toFixed(4)}`);
+  }
+
+  console.log(`\x1b[90m${"─".repeat(50)}\x1b[0m`);
+  console.log(`\x1b[90mLog: ${COST_LOG_PATH}\x1b[0m`);
+}
+
+function calculateCost(
+  model: string,
+  promptTokens: number,
+  outputTokens: number
+): number {
+  const rates = COST_RATES[model] || COST_RATES[DEFAULT_MODEL];
+  const inputCost = (promptTokens / 1_000_000) * rates.input;
+  const outputCost = (outputTokens / 1_000_000) * rates.imageOutput;
+  return inputCost + outputCost;
+}
+
 // ---------------------------------------------------------------------------
 // Chroma key removal - broadcast-grade pipeline
 // ---------------------------------------------------------------------------
@@ -137,16 +268,12 @@ async function removeChromaKey(
 
   const tempAlpha = join(dir, `${name}_alpha.png`);
   const tempAlphaRef = join(dir, `${name}_alpha_ref.png`);
-  const tempUnblended = join(dir, `${name}_unblended.png`);
-  const tempDespilled = join(dir, `${name}_despilled.png`);
 
   const cleanup = async () => {
     const { unlink } = await import("fs/promises");
     await Promise.all([
       unlink(tempAlpha).catch(() => {}),
       unlink(tempAlphaRef).catch(() => {}),
-      unlink(tempUnblended).catch(() => {}),
-      unlink(tempDespilled).catch(() => {}),
     ]);
   };
 
@@ -226,36 +353,13 @@ async function removeChromaKey(
       tempAlphaRef,
     ]);
 
-    // Step 4: Unmix/unpremultiply - removes green halo from edges
-    // Formula: v==0 ? 0 : u/v - KEY/v + KEY
+    // Step 4: Apply refined alpha directly to original image
+    // Skip unmix/despill - those formulas corrupt non-green foreground colors
+    // (brown wood becomes pink/magenta because despill crushes green channel in warm tones)
     await runMagick([
       inputPath,
       tempAlphaRef,
-      "-alpha",
-      "off",
-      "-fx",
-      `v==0 ? 0 : u/v - ${keyColor}/v + ${keyColor}`,
-      tempUnblended,
-    ]);
-
-    // Step 5: Despill - limit green channel to remove remaining spill
-    // Formula: g > (r+b)/2 ? (r+b)/2 : g
-    await runMagick([
-      tempUnblended,
-      "-channel",
-      "G",
-      "-fx",
-      "g>(r+b)/2 ? (r+b)/2 : g",
-      "+channel",
-      tempDespilled,
-    ]);
-
-    // Step 6: Apply refined alpha to despilled image
-    await runMagick([
-      tempDespilled,
-      tempAlphaRef,
-      "-alpha",
-      "off",
+      "-alpha", "off",
       "-compose",
       "CopyOpacity",
       "-composite",
@@ -293,13 +397,13 @@ async function removeChromaKey(
 // Argument parsing
 // ---------------------------------------------------------------------------
 
-function parseArgs(): Options {
+function parseArgs(): Options | "costs" {
   const args = process.argv.slice(2);
 
   if (args.length === 0 || args[0] === "--help" || args[0] === "-h") {
     console.log(`
-\x1b[36mNano Banana\x1b[0m - AI Image Generation CLI
-Powered by Gemini 3 Pro Image Preview
+\x1b[36mNano Banana 2\x1b[0m - AI Image Generation CLI
+Default: Gemini 3.1 Flash Image Preview (Nano Banana 2)
 
 \x1b[33mUsage:\x1b[0m
   nano-banana "your prompt"
@@ -310,25 +414,47 @@ Powered by Gemini 3 Pro Image Preview
 
 \x1b[33mOptions:\x1b[0m
   -o, --output      Output filename (without extension) [default: nano-gen-{timestamp}]
-  -s, --size        Image size: 1K or 2K [default: 2K]
+  -s, --size        Image size: 512, 1K, 2K, or 4K [default: 1K]
+  -a, --aspect      Aspect ratio: 1:1, 16:9, 9:16, 4:3, 3:4, etc. [default: model default]
+  -m, --model       Model: flash/nb2, pro/nb-pro, or any model ID [default: flash]
   -d, --dir         Output directory [default: current directory]
   -r, --ref         Reference image(s) - can use multiple times
   -t, --transparent Remove chroma key background (neon green by default)
   --chroma          Chroma key color to remove [default: #00FF00]
   --fuzz            Color tolerance percentage [default: 10]
   --api-key         Gemini API key (overrides env/file)
+  --costs           Show cost summary from generation history
   -h, --help        Show this help
+
+\x1b[33mModels:\x1b[0m
+  flash, nb2    Gemini 3.1 Flash Image Preview (default, fast, cheap)
+  pro, nb-pro   Gemini 3 Pro Image Preview (highest quality, 2x cost)
+  <model-id>    Any Gemini model ID (e.g. gemini-2.5-flash-image)
+
+\x1b[33mSizes:\x1b[0m
+  512   ~512x512   (~$0.045/image on Flash)
+  1K    ~1024x1024 (~$0.067/image on Flash) [default]
+  2K    ~2048x2048 (~$0.101/image on Flash)
+  4K    ~4096x4096 (~$0.151/image on Flash)
+
+\x1b[33mAspect Ratios:\x1b[0m
+  1:1, 16:9, 9:16, 4:3, 3:4, 3:2, 2:3, 4:5, 5:4, 21:9
 
 \x1b[33mExamples:\x1b[0m
   nano-banana "minimal dashboard UI with dark theme"
   nano-banana "make this image have a white background" -r screenshot.png
   nano-banana "combine these two UI styles" -r style1.png -r style2.png -o combined
   nano-banana "luxury product mockup" -o product -s 2K
+  nano-banana "cinematic landscape" -a 16:9 -s 4K
+  nano-banana "highest quality portrait" --model pro -a 9:16
 
 \x1b[33mTransparent Assets:\x1b[0m
   nano-banana "robot mascot on solid neon green background" -t
   nano-banana "product icon, green screen background #00FF00" --transparent
   nano-banana "logo design on bright green" -t --fuzz 15
+
+\x1b[33mCost Tracking:\x1b[0m
+  nano-banana --costs    Show total spend and per-model breakdown
 
 \x1b[33mAPI Key:\x1b[0m
   Set GEMINI_API_KEY in your environment, a .env file, or pass --api-key.
@@ -337,16 +463,23 @@ Powered by Gemini 3 Pro Image Preview
     process.exit(0);
   }
 
+  // Handle --costs flag
+  if (args[0] === "--costs") {
+    return "costs";
+  }
+
   const options: Options = {
     prompt: "",
     output: `nano-gen-${Date.now()}`,
-    size: "2K",
+    size: "1K",
     outputDir: process.cwd(),
     referenceImages: [],
     transparent: false,
     chromaColor: "#00FF00",
     fuzz: 10,
     apiKey: undefined,
+    model: DEFAULT_MODEL,
+    aspectRatio: undefined,
   };
 
   let i = 0;
@@ -357,9 +490,22 @@ Powered by Gemini 3 Pro Image Preview
       options.output = args[++i];
     } else if (arg === "-s" || arg === "--size") {
       const size = args[++i];
-      if (size === "1K" || size === "2K") {
-        options.size = size;
+      if (VALID_SIZES.includes(size as ImageSize)) {
+        options.size = size as ImageSize;
+      } else {
+        console.error(`\x1b[31mError:\x1b[0m Invalid size "${size}". Valid: ${VALID_SIZES.join(", ")}`);
+        process.exit(1);
       }
+    } else if (arg === "-a" || arg === "--aspect") {
+      const aspect = args[++i];
+      if (VALID_ASPECTS.includes(aspect as (typeof VALID_ASPECTS)[number])) {
+        options.aspectRatio = aspect;
+      } else {
+        console.error(`\x1b[31mError:\x1b[0m Invalid aspect ratio "${aspect}". Valid: ${VALID_ASPECTS.join(", ")}`);
+        process.exit(1);
+      }
+    } else if (arg === "-m" || arg === "--model") {
+      options.model = resolveModel(args[++i]);
     } else if (arg === "-d" || arg === "--dir") {
       options.outputDir = args[++i];
     } else if (arg === "-r" || arg === "--ref") {
@@ -381,6 +527,12 @@ Powered by Gemini 3 Pro Image Preview
   if (!options.prompt) {
     console.error("\x1b[31mError:\x1b[0m No prompt provided");
     process.exit(1);
+  }
+
+  // Warn if 512 is used with Pro model
+  if (options.size === "512" && options.model === "gemini-3-pro-image-preview") {
+    console.log("\x1b[33mWarning:\x1b[0m 512px resolution is only available on Flash. Switching to 1K.");
+    options.size = "1K";
   }
 
   return options;
@@ -408,19 +560,31 @@ async function generateImage(options: Options): Promise<string[]> {
 
   const ai = new GoogleGenAI({ apiKey });
 
+  // Build imageConfig
+  const imageConfig: Record<string, string> = {
+    imageSize: options.size === "512" ? "512px" : options.size,
+  };
+  if (options.aspectRatio) {
+    imageConfig.aspectRatio = options.aspectRatio;
+  }
+
   const config = {
     responseModalities: ["IMAGE", "TEXT"] as const,
-    imageConfig: {
-      imageSize: options.size,
-    },
+    imageConfig,
     tools: [{ googleSearch: {} }],
   };
 
-  const model = "gemini-3-pro-image-preview";
+  const modelName = options.model;
+  const shortName = modelName.includes("flash")
+    ? "Nano Banana 2 (Flash 3.1)"
+    : modelName.includes("pro")
+      ? "Nano Banana Pro"
+      : modelName;
 
-  console.log("\x1b[36m[nano-banana]\x1b[0m Generating image...");
+  console.log(`\x1b[36m[nano-banana]\x1b[0m Generating image...`);
+  console.log(`\x1b[90mModel: ${shortName}\x1b[0m`);
   console.log(`\x1b[90mPrompt: ${options.prompt}\x1b[0m`);
-  console.log(`\x1b[90mSize: ${options.size}\x1b[0m`);
+  console.log(`\x1b[90mSize: ${options.size}${options.aspectRatio ? ` | Aspect: ${options.aspectRatio}` : ""}\x1b[0m`);
 
   if (options.referenceImages.length > 0) {
     console.log(
@@ -449,8 +613,9 @@ async function generateImage(options: Options): Promise<string[]> {
 
   const contents = [{ role: "user" as const, parts }];
 
-  const response = await ai.models.generateContentStream({
-    model,
+  // Use non-streaming to get usageMetadata for cost tracking
+  const response = await ai.models.generateContent({
+    model: modelName,
     config,
     contents,
   });
@@ -462,16 +627,8 @@ async function generateImage(options: Options): Promise<string[]> {
     await mkdir(options.outputDir, { recursive: true });
   }
 
-  for await (const chunk of response) {
-    if (
-      !chunk.candidates ||
-      !chunk.candidates[0]?.content ||
-      !chunk.candidates[0]?.content?.parts
-    ) {
-      continue;
-    }
-
-    for (const part of chunk.candidates[0].content.parts) {
+  if (response.candidates && response.candidates[0]?.content?.parts) {
+    for (const part of response.candidates[0].content.parts) {
       if (part.inlineData) {
         const inlineData = part.inlineData;
         const mimeType = inlineData.mimeType || "image/png";
@@ -494,6 +651,34 @@ async function generateImage(options: Options): Promise<string[]> {
     }
   }
 
+  // Cost tracking
+  const usage = response.usageMetadata;
+  if (usage) {
+    const promptTokens = usage.promptTokenCount || 0;
+    const outputTokens = usage.candidatesTokenCount || 0;
+    const cost = calculateCost(modelName, promptTokens, outputTokens);
+
+    console.log(
+      `\x1b[90mCost: ~$${cost.toFixed(4)} (${promptTokens} input + ${outputTokens} output tokens)\x1b[0m`
+    );
+
+    // Log to file
+    const entry: CostEntry = {
+      timestamp: new Date().toISOString(),
+      model: modelName,
+      size: options.size,
+      aspect: options.aspectRatio || null,
+      prompt_tokens: promptTokens,
+      output_tokens: outputTokens,
+      estimated_cost: cost,
+      output_file: savedFiles[0] || "",
+    };
+
+    await logCost(entry).catch(() => {
+      // Non-fatal - don't fail generation if cost logging fails
+    });
+  }
+
   return savedFiles;
 }
 
@@ -501,7 +686,14 @@ async function generateImage(options: Options): Promise<string[]> {
 // Main
 // ---------------------------------------------------------------------------
 
-const options = parseArgs();
+const parsed = parseArgs();
+
+if (parsed === "costs") {
+  printCostSummary();
+  process.exit(0);
+}
+
+const options = parsed;
 
 generateImage(options)
   .then(async (files) => {

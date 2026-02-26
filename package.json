@@ -1,7 +1,7 @@
 {
-  "name": "nano-banana",
-  "version": "1.0.0",
-  "description": "AI image generation CLI powered by Gemini 3 Pro. Green screen transparency, reference images, style transfer.",
+  "name": "nano-banana-2",
+  "version": "2.0.0",
+  "description": "AI image generation CLI powered by Gemini 3.1 Flash (default) and Gemini 3 Pro. Multi-model, multi-resolution (512-4K), aspect ratios, cost tracking, green screen transparency, reference images, style transfer.",
   "type": "module",
   "bin": {
     "nano-banana": "./src/cli.ts"

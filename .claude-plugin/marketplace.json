@@ -1,21 +1,21 @@
 {
-  "name": "nano-banana-pro-skill-marketplace",
+  "name": "nano-banana-2-skill-marketplace",
   "owner": {
     "name": "Bootoshi",
     "url": "https://github.com/kingbootoshi"
   },
   "metadata": {
-    "description": "AI image generation CLI powered by Gemini 3 Pro. Green screen transparency, reference images, style transfer.",
-    "version": "1.0.0"
+    "description": "AI image generation CLI powered by Gemini 3.1 Flash (default) and Gemini 3 Pro. Multi-resolution, aspect ratios, cost tracking, green screen transparency, reference images, style transfer.",
+    "version": "2.0.0"
   },
   "plugins": [
     {
       "name": "nano-banana",
       "source": "./plugins/nano-banana",
-      "description": "AI image generation with Gemini 3 Pro. Generates 2K images from text prompts with reference image support, green screen transparency pipeline, and style transfer.",
-      "version": "1.0.0",
+      "description": "AI image generation with Gemini 3.1 Flash and Pro. Generates 512-4K images with aspect ratio control, cost tracking, reference image support, and broadcast-grade green screen transparency.",
+      "version": "2.0.0",
       "category": "creative tools",
-      "keywords": ["image-generation", "ai", "gemini", "pixel-art", "green-screen", "chroma-key", "style-transfer"]
+      "keywords": ["image-generation", "ai", "gemini", "pixel-art", "green-screen", "chroma-key", "style-transfer", "nano-banana"]
     }
   ]
 }

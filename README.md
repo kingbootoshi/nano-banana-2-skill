@@ -1,6 +1,6 @@
-# Nano Banana Pro Skill
+# Nano Banana 2 Skill
 
-AI image generation CLI powered by Gemini 3 Pro Image Preview. Generates high-quality 2K images from text prompts with reference image support, broadcast-grade green screen transparency, and style transfer.
+AI image generation CLI powered by Gemini 3.1 Flash Image Preview (default) with support for Gemini 3 Pro and any Gemini model. Multi-resolution (512-4K), aspect ratios, cost tracking, broadcast-grade green screen transparency, reference images, and style transfer.
 
 Also ships as a [Claude Code](https://docs.anthropic.com/en/docs/claude-code) skill for AI-assisted image generation workflows.
 
@@ -10,44 +10,94 @@ Also ships as a [Claude Code](https://docs.anthropic.com/en/docs/claude-code) sk
 
 ```bash
 # Clone the repo
-git clone https://github.com/kingbootoshi/nano-banana-pro-skill.git
-cd nano-banana-pro-skill
+git clone https://github.com/kingbootoshi/nano-banana-2-skill.git ~/tools/nano-banana-2
+cd ~/tools/nano-banana-2
 
 # Install dependencies
 bun install
 
+# Link globally (no sudo needed - uses Bun's global bin)
+bun link
+
 # Set up your API key
-cp .env.example .env
-# Edit .env and add your Gemini API key from https://aistudio.google.com/apikey
-
-# Link globally (optional)
-sudo ln -sf "$(pwd)/src/cli.ts" /usr/local/bin/nano-banana
+mkdir -p ~/.nano-banana
+echo "GEMINI_API_KEY=your_key_here" > ~/.nano-banana/.env
 ```
 
-### As a Claude Code Plugin
+Get a Gemini API key at [Google AI Studio](https://aistudio.google.com/apikey).
 
-```
-/plugin marketplace add kingbootoshi/nano-banana-pro-skill
-/plugin install nano-banana
-```
+Now you can use `nano-banana` from anywhere.
 
-Then use it by saying "generate an image of..." or invoke directly with `/nano-banana`.
+### As a Claude Code Skill
+
+When installed as a Claude Code skill, just say `/init` and Claude will clone the repo, install deps, and link the command for you. Then use it by saying "generate an image of..." and Claude handles the rest.
+
+### Fallback (if `bun link` doesn't work)
+
+```bash
+mkdir -p ~/.local/bin
+ln -sf ~/tools/nano-banana-2/src/cli.ts ~/.local/bin/nano-banana
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
+source ~/.zshrc
+```
 
 ## Usage
 
 ```bash
-# Basic - generates to current directory
+# Basic - generates 1K image to current directory
 nano-banana "minimal dashboard UI with dark theme"
 
 # Custom output name
 nano-banana "luxury product mockup" -o product
 
-# Specify size (1K or 2K)
-nano-banana "abstract gradient background" -s 1K
+# Higher resolution
+nano-banana "detailed landscape painting" -s 2K
+
+# Ultra high res
+nano-banana "cinematic widescreen scene" -s 4K -a 16:9
+
+# Lower resolution (fast, cheap)
+nano-banana "quick sketch concept" -s 512
 
 # Custom output directory
 nano-banana "UI screenshot" -o dashboard -d ~/Pictures
 ```
+
+### Models
+
+```bash
+# Default - Nano Banana 2 (Gemini 3.1 Flash, fast and cheap)
+nano-banana "your prompt"
+
+# Pro - highest quality, 2x cost
+nano-banana "your prompt" --model pro
+
+# Any model ID
+nano-banana "your prompt" --model gemini-2.5-flash-image
+```
+
+| Alias | Model | Best For |
+|-------|-------|----------|
+| `flash`, `nb2` | Gemini 3.1 Flash Image Preview | Speed, cost, high-volume |
+| `pro`, `nb-pro` | Gemini 3 Pro Image Preview | Highest quality, complex composition |
+
+### Aspect Ratios
+
+```bash
+# Widescreen
+nano-banana "cinematic landscape" -a 16:9
+
+# Portrait
+nano-banana "mobile app screenshot" -a 9:16
+
+# Ultra-wide
+nano-banana "panoramic scene" -a 21:9
+
+# Standard photo
+nano-banana "product photo" -a 4:3
+```
+
+Supported: `1:1`, `16:9`, `9:16`, `4:3`, `3:4`, `3:2`, `2:3`, `4:5`, `5:4`, `21:9`
 
 ### Reference Images
 
@@ -96,14 +146,36 @@ nano-banana "pixel art character, 256x256" -r style.png -r blank-256x256.png -o 
 | Option | Default | Description |
 |--------|---------|-------------|
 | `-o, --output` | `nano-gen-{timestamp}` | Output filename (no extension) |
-| `-s, --size` | `2K` | Image size: `1K` or `2K` |
+| `-s, --size` | `1K` | Image size: `512`, `1K`, `2K`, or `4K` |
+| `-a, --aspect` | model default | Aspect ratio: `1:1`, `16:9`, `9:16`, etc. |
+| `-m, --model` | `flash` | Model: `flash`/`nb2`, `pro`/`nb-pro`, or any model ID |
 | `-d, --dir` | current directory | Output directory |
 | `-r, --ref` | - | Reference image (can use multiple times) |
 | `-t, --transparent` | - | Remove chroma key background |
 | `--chroma` | `#00FF00` | Color to remove when using -t |
 | `--fuzz` | `10` | Color tolerance % (higher = more lenient) |
 | `--api-key` | - | Gemini API key (overrides env/file) |
+| `--costs` | - | Show cost summary from generation history |
 | `-h, --help` | - | Show help |
+
+## Sizes and Costs
+
+| Size | Resolution | Flash Cost | Pro Cost |
+|------|-----------|------------|----------|
+| `512` | ~512x512 | ~$0.045 | N/A (Flash only) |
+| `1K` | ~1024x1024 | ~$0.067 | ~$0.134 |
+| `2K` | ~2048x2048 | ~$0.101 | ~$0.201 |
+| `4K` | ~4096x4096 | ~$0.151 | ~$0.302 |
+
+## Cost Tracking
+
+Every generation logs its cost to `~/.nano-banana/costs.json`. View your spending:
+
+```bash
+nano-banana --costs
+```
+
+Shows total generations, total spend, and per-model breakdown.
 
 ## API Key Configuration
 
@@ -165,7 +237,7 @@ When installed as a Claude Code plugin, the skill triggers on phrases like:
 - "make an asset"
 - "generate artwork"
 
-Claude will construct the appropriate `nano-banana` command based on your request, handling reference images, transparency, and output configuration automatically.
+Claude will construct the appropriate `nano-banana` command based on your request, handling model selection, resolution, aspect ratio, reference images, transparency, and output configuration automatically.
 
 ## License
 
