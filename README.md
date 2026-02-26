@@ -6,7 +6,7 @@ Also ships as a [Claude Code](https://docs.anthropic.com/en/docs/claude-code) sk
 
 ## Install
 
-**Requirements:** [Bun](https://bun.sh), [withoutbg](https://github.com/withoutbg/withoutbg) + [ImageMagick](https://imagemagick.org) (for transparent mode)
+**Requirements:** [Bun](https://bun.sh), [FFmpeg](https://ffmpeg.org) + [ImageMagick](https://imagemagick.org) (for transparent mode)
 
 ```bash
 # Clone the repo
@@ -129,7 +129,7 @@ nano-banana "minimalist tech logo" -t -o logo
 nano-banana "pixel art treasure chest" -t -o chest
 ```
 
-Uses [withoutbg](https://github.com/withoutbg/withoutbg) (4-model AI pipeline) + ImageMagick post-processing for pixel-perfect edges. Works with any background color - no green screen needed. Install: `pip install withoutbg` (first run downloads ~318MB of models, then works offline).
+The `-t` flag automatically prompts the AI to generate on a green screen, then uses FFmpeg `colorkey` + `despill` to key out the background and remove green spill from edge pixels. ImageMagick trims the result. Requires: `brew install ffmpeg imagemagick`
 
 ### Exact Dimensions
 
@@ -151,7 +151,7 @@ nano-banana "pixel art character, 256x256" -r style.png -r blank-256x256.png -o 
 | `-m, --model` | `flash` | Model: `flash`/`nb2`, `pro`/`nb-pro`, or any model ID |
 | `-d, --dir` | current directory | Output directory |
 | `-r, --ref` | - | Reference image (can use multiple times) |
-| `-t, --transparent` | - | Remove background (AI-powered, any color) |
+| `-t, --transparent` | - | Generate on green screen, remove background (FFmpeg) |
 | `--api-key` | - | Gemini API key (overrides env/file) |
 | `--costs` | - | Show cost summary from generation history |
 | `-h, --help` | - | Show help |
@@ -204,13 +204,13 @@ nano-banana "your prompt" --api-key your_key_here
 
 ## How Transparent Mode Works
 
-The `-t` flag uses a 3-step pipeline for pixel-perfect background removal:
+The `-t` flag uses a 3-step pipeline for pixel-perfect transparency:
 
-1. **AI removal** - [withoutbg](https://github.com/withoutbg/withoutbg) runs 4 neural networks (Depth Anything V2, ISNet segmentation, Focus matting, Focus refiner) to produce a high-quality alpha mask
-2. **Edge cleanup** - ImageMagick erodes the alpha by 1 pixel (Diamond kernel) to shave off fringe, then thresholds to binary (no semi-transparent pixels)
-3. **Auto-crop** - trims transparent padding and resets canvas
+1. **Green screen prompt** - The CLI automatically appends green screen instructions to your prompt, so the AI generates on a solid green background
+2. **FFmpeg colorkey + despill** - `colorkey` removes the green background. `despill` reconstructs edge pixel colors by mathematically removing green contamination from the RGB channels - this is why edges are clean instead of having green fringe
+3. **Auto-crop** - ImageMagick trims transparent padding and resets canvas
 
-No green screen prompting needed. Works with any background color. First run downloads ~318MB of models from HuggingFace, then runs fully offline.
+The key color is auto-detected from corner pixels (the AI generates near-green like `#05F904`, not exact `#00FF00`). Requires FFmpeg and ImageMagick: `brew install ffmpeg imagemagick`
 
 ## Use Cases
 

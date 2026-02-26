@@ -56,7 +56,7 @@ Get a Gemini API key at: https://aistudio.google.com/apikey
 | `-m, --model` | `flash` | Model: `flash`/`nb2`, `pro`/`nb-pro`, or any model ID |
 | `-d, --dir` | current directory | Output directory |
 | `-r, --ref` | - | Reference image (can use multiple times) |
-| `-t, --transparent` | - | Remove background (AI-powered, any color) |
+| `-t, --transparent` | - | Generate on green screen, remove background (FFmpeg) |
 | `--api-key` | - | Gemini API key (overrides env/file) |
 | `--costs` | - | Show cost summary |
 
@@ -119,9 +119,9 @@ nano-banana "robot mascot character" -t -o mascot
 nano-banana "pixel art treasure chest" -t -o chest
 ```
 
-No green screen prompting needed. The `-t` flag uses AI-powered background removal (withoutbg) + ImageMagick edge cleanup for pixel-perfect transparency. Works with any background color.
+The `-t` flag automatically prompts the AI to generate on a green screen, then uses FFmpeg `colorkey` + `despill` to key out the background and remove green spill from edge pixels. Pixel-perfect transparency with no manual prompting needed.
 
-Requires: `pip install withoutbg` (first run downloads ~318MB of AI models, then works offline).
+Requires: `brew install ffmpeg imagemagick`
 
 ### Exact Dimensions
 
@@ -177,8 +177,8 @@ nano-banana "rough sketch of a robot" -s 512
 # Dark mode UI
 nano-banana "Premium SaaS chat interface, dark mode, minimal, Linear-style aesthetic"
 
-# Game assets with transparency
-nano-banana "pixel art treasure chest on solid neon green background #00FF00" -t -o chest
+# Game assets with transparency (green screen auto-prompted)
+nano-banana "pixel art treasure chest" -t -o chest
 
 # Portrait aspect ratio
 nano-banana "mobile app onboarding screen" -a 9:16

@@ -256,34 +256,68 @@ function calculateCost(
 }
 
 // ---------------------------------------------------------------------------
-// Background removal - withoutbg AI + ImageMagick post-processing
+// Background removal - FFmpeg colorkey + despill
 // ---------------------------------------------------------------------------
+
+async function detectKeyColor(inputPath: string): Promise<string> {
+  // Sample the top-left 4x4 patch and pick the most common color
+  const raw = await runMagick([
+    inputPath,
+    "-crop", "4x4+0+0", "+repage",
+    "-format", "%c",
+    "histogram:info:-",
+  ]);
+
+  // Histogram output lines look like: "  16: (  5,249,  4) #05F904 srgb(...)"
+  // Find the line with the highest count and extract the hex color
+  let bestCount = 0;
+  let bestColor = "00FF00"; // fallback pure green
+
+  for (const line of raw.split("\n")) {
+    const countMatch = line.match(/^\s*(\d+):/);
+    const hexMatch = line.match(/#([0-9A-Fa-f]{6})/);
+    if (countMatch && hexMatch) {
+      const count = parseInt(countMatch[1], 10);
+      if (count > bestCount) {
+        bestCount = count;
+        bestColor = hexMatch[1];
+      }
+    }
+  }
+
+  return bestColor;
+}
 
 async function removeBackground(inputPath: string): Promise<string> {
   const dir = inputPath.substring(0, inputPath.lastIndexOf("/"));
   const name = basename(inputPath, extname(inputPath));
   const outputPath = join(dir, `${name}.png`);
-  const tempRembg = join(dir, `${name}_rembg.png`);
+  const tempKeyed = join(dir, `${name}_keyed.png`);
 
   const cleanup = async () => {
     const { unlink } = await import("fs/promises");
-    await unlink(tempRembg).catch(() => {});
+    await unlink(tempKeyed).catch(() => {});
   };
 
   try {
-    // Step 1: AI background removal with withoutbg (4-model pipeline)
-    console.log(`  \x1b[90mRunning AI background removal...\x1b[0m`);
-    await runCommand("withoutbg", [inputPath, "-o", tempRembg]);
+    // Step 1: Auto-detect the green screen key color from corner pixels
+    console.log(`  \x1b[90mDetecting key color...\x1b[0m`);
+    const keyColor = await detectKeyColor(inputPath);
+    console.log(`  \x1b[90mKey color: #${keyColor}\x1b[0m`);
 
-    // Step 2: Erode alpha by 1px to shave off fringe, then threshold
-    // to binary (no semi-transparent pixels), then auto-crop
-    console.log(`  \x1b[90mCleaning edges...\x1b[0m`);
+    // Step 2: FFmpeg colorkey + despill
+    // colorkey removes the background, despill removes green spill from edge RGB values
+    console.log(`  \x1b[90mRunning FFmpeg colorkey + despill...\x1b[0m`);
+    await runCommand("ffmpeg", [
+      "-y", "-i", inputPath,
+      "-vf", `colorkey=0x${keyColor}:0.25:0.08,despill=green`,
+      tempKeyed,
+    ]);
+
+    // Step 3: Auto-crop transparent padding
+    console.log(`  \x1b[90mTrimming...\x1b[0m`);
     await runMagick([
-      tempRembg,
-      "-channel", "A",
-      "-morphology", "Erode", "Diamond:1",
-      "-threshold", "50%",
-      "+channel",
+      tempKeyed,
       "-trim", "+repage",
       outputPath,
     ]);
@@ -294,12 +328,10 @@ async function removeBackground(inputPath: string): Promise<string> {
     await cleanup();
     const msg = err instanceof Error ? err.message : String(err);
 
-    // Check if withoutbg is not installed
-    if (msg.includes("Failed to run withoutbg") || msg.includes("ENOENT")) {
-      console.error(`\x1b[31m  withoutbg not found.\x1b[0m`);
-      console.error(`  Install it: pip install withoutbg`);
-      console.error(`  First run downloads ~318MB of AI models, then works offline.`);
-      throw new Error("withoutbg is required for transparent mode. Install: pip install withoutbg");
+    if (msg.includes("Failed to run ffmpeg") || msg.includes("ENOENT")) {
+      console.error(`\x1b[31m  FFmpeg not found.\x1b[0m`);
+      console.error(`  Install it: brew install ffmpeg`);
+      throw new Error("FFmpeg is required for transparent mode. Install: brew install ffmpeg");
     }
 
     throw err;
@@ -332,7 +364,7 @@ Default: Gemini 3.1 Flash Image Preview (Nano Banana 2)
   -m, --model       Model: flash/nb2, pro/nb-pro, or any model ID [default: flash]
   -d, --dir         Output directory [default: current directory]
   -r, --ref         Reference image(s) - can use multiple times
-  -t, --transparent Remove background (AI-powered, works with any color)
+  -t, --transparent Generate on green screen, then remove background (FFmpeg colorkey + despill)
   --api-key         Gemini API key (overrides env/file)
   --costs           Show cost summary from generation history
   -h, --help        Show this help
@@ -360,9 +392,9 @@ Default: Gemini 3.1 Flash Image Preview (Nano Banana 2)
   nano-banana "highest quality portrait" --model pro -a 9:16
 
 \x1b[33mTransparent Assets:\x1b[0m
-  nano-banana "robot mascot character" -t
-  nano-banana "product icon on white background" --transparent
+  nano-banana "robot mascot character" -t -o mascot
   nano-banana "pixel art treasure chest" -t -o chest
+  nano-banana "minimalist tech logo" -t -o logo
 
 \x1b[33mCost Tracking:\x1b[0m
   nano-banana --costs    Show total spend and per-model breakdown
@@ -514,7 +546,12 @@ async function generateImage(options: Options): Promise<string[]> {
     }
   }
 
-  parts.push({ text: options.prompt });
+  // When transparent mode is on, wrap the prompt to request a green screen background
+  const finalPrompt = options.transparent
+    ? `${options.prompt}. Place the subject on a solid bright green background (#00FF00). The background must be a single flat green color with no gradients, shadows, or variation.`
+    : options.prompt;
+
+  parts.push({ text: finalPrompt });
 
   const contents = [{ role: "user" as const, parts }];
 
@@ -611,7 +648,7 @@ generateImage(options)
 
     if (options.transparent) {
       console.log(
-        `\n\x1b[36m[nano-banana]\x1b[0m Removing background...`
+        `\n\x1b[36m[nano-banana]\x1b[0m Keying out green screen...`
       );
       const processedFiles: string[] = [];
 
