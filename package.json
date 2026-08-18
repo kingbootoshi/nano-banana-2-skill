@@ -1,14 +1,15 @@
 {
   "name": "nano-banana-2",
   "version": "2.0.0",
-  "description": "AI image generation CLI powered by Gemini 3.1 Flash (default) and Gemini 3 Pro. Multi-model, multi-resolution (512-4K), aspect ratios, cost tracking, green screen transparency, reference images, style transfer.",
+  "description": "AI image generation CLI powered by Gemini 3.1 Flash (default), with optional Atlas Cloud support. Multi-model, multi-resolution, aspect ratios, cost tracking, green screen transparency, reference images, style transfer.",
   "type": "module",
   "bin": {
     "nano-banana": "./src/cli.ts"
   },
   "scripts": {
     "start": "bun run src/cli.ts",
-    "dev": "bun run src/cli.ts"
+    "dev": "bun run src/cli.ts",
+    "test": "bun test"
   },
   "keywords": [
     "ai",
