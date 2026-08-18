@@ -1,11 +1,11 @@
 ---
 name: nano-banana
-description: Generates AI images using the nano-banana CLI (Gemini 3.1 Flash default, Pro available). Handles multi-resolution (512-4K), aspect ratios, reference images for style transfer, green screen workflow for transparent assets, cost tracking, and exact dimension control. Use when asked to "generate an image", "create a sprite", "make an asset", "generate artwork", or any image generation task for UI mockups, game assets, videos, or marketing materials.
+description: Generates AI images using the nano-banana CLI (Gemini 3.1 Flash default, optional Atlas Cloud provider). Handles multi-resolution, aspect ratios, reference images for style transfer, green screen workflow for transparent assets, cost tracking, and exact dimension control. Use when asked to "generate an image", "create a sprite", "make an asset", "generate artwork", or any image generation task for UI mockups, game assets, videos, or marketing materials.
 ---
 
 # nano-banana
 
-AI image generation CLI. Default model: Gemini 3.1 Flash Image Preview (Nano Banana 2).
+AI image generation CLI. Default provider: Gemini. Atlas Cloud is available explicitly with `--provider atlas`.
 
 ## /init - First-Time Setup
 
@@ -54,10 +54,11 @@ Get a Gemini API key at: https://aistudio.google.com/apikey
 | `-s, --size` | `1K` | Image size: `512`, `1K`, `2K`, or `4K` |
 | `-a, --aspect` | model default | Aspect ratio: `1:1`, `16:9`, `9:16`, `4:3`, `3:4`, etc. |
 | `-m, --model` | `flash` | Model: `flash`/`nb2`, `pro`/`nb-pro`, or any model ID |
+| `-p, --provider` | `gemini` | Provider: `gemini` or `atlas` |
 | `-d, --dir` | current directory | Output directory |
 | `-r, --ref` | - | Reference image (can use multiple times) |
 | `-t, --transparent` | - | Generate on green screen, remove background (FFmpeg) |
-| `--api-key` | - | Gemini API key (overrides env/file) |
+| `--api-key` | - | Selected provider API key (overrides env/file) |
 | `--costs` | - | Show cost summary |
 
 ## Models
@@ -66,6 +67,8 @@ Get a Gemini API key at: https://aistudio.google.com/apikey
 |-------|-------|----------|
 | `flash`, `nb2` | Gemini 3.1 Flash | Default. Fast, cheap (~$0.067/1K image) |
 | `pro`, `nb-pro` | Gemini 3 Pro | Highest quality needed (~$0.134/1K image) |
+
+For Atlas Cloud, set `ATLASCLOUD_API_KEY` and add `--provider atlas`. Text prompts use `google/nano-banana-2-lite/text-to-image-developer`; requests with reference images use `google/nano-banana-2-lite/edit-developer`. The Atlas routes currently support 1K output and up to 14 references.
 
 ## Sizes
 
@@ -194,3 +197,5 @@ The CLI resolves the Gemini API key in this order:
 5. `~/.nano-banana/.env`
 
 Get a key at: https://aistudio.google.com/apikey
+
+With `--provider atlas`, the same priority applies to `--api-key` and `ATLASCLOUD_API_KEY`. Create an Atlas key at: https://www.atlascloud.ai/console/api-keys

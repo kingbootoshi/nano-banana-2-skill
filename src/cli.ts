@@ -20,6 +20,11 @@ import { existsSync, readFileSync } from "fs";
 import { spawn } from "child_process";
 import { fileURLToPath } from "url";
 import { homedir } from "os";
+import {
+  ATLAS_EDIT_MODEL,
+  ATLAS_TEXT_MODEL,
+  generateAtlasImages,
+} from "./atlas.ts";
 
 // ---------------------------------------------------------------------------
 // Environment / API key resolution
@@ -63,6 +68,9 @@ const MODEL_ALIASES: Record<string, string> = {
 
 const DEFAULT_MODEL = "gemini-3.1-flash-image-preview";
 
+const PROVIDERS = ["gemini", "atlas"] as const;
+type Provider = (typeof PROVIDERS)[number];
+
 const VALID_SIZES = ["512", "1K", "2K", "4K"] as const;
 type ImageSize = (typeof VALID_SIZES)[number];
 
@@ -82,6 +90,7 @@ const COST_RATES: Record<string, { input: number; imageOutput: number }> = {
 // ---------------------------------------------------------------------------
 
 interface Options {
+  provider: Provider;
   prompt: string;
   output: string;
   size: ImageSize;
@@ -89,7 +98,7 @@ interface Options {
   referenceImages: string[];
   transparent: boolean;
   apiKey: string | undefined;
-  model: string;
+  model: string | undefined;
   aspectRatio: string | undefined;
 }
 
@@ -362,10 +371,11 @@ Default: Gemini 3.1 Flash Image Preview (Nano Banana 2)
   -s, --size        Image size: 512, 1K, 2K, or 4K [default: 1K]
   -a, --aspect      Aspect ratio: 1:1, 16:9, 9:16, 4:3, 3:4, etc. [default: model default]
   -m, --model       Model: flash/nb2, pro/nb-pro, or any model ID [default: flash]
+  -p, --provider    Provider: gemini or atlas [default: gemini]
   -d, --dir         Output directory [default: current directory]
   -r, --ref         Reference image(s) - can use multiple times
   -t, --transparent Generate on green screen, then remove background (FFmpeg colorkey + despill)
-  --api-key         Gemini API key (overrides env/file)
+  --api-key         Selected provider API key (overrides env/file)
   --costs           Show cost summary from generation history
   -h, --help        Show this help
 
@@ -373,6 +383,12 @@ Default: Gemini 3.1 Flash Image Preview (Nano Banana 2)
   flash, nb2    Gemini 3.1 Flash Image Preview (default, fast, cheap)
   pro, nb-pro   Gemini 3 Pro Image Preview (highest quality, 2x cost)
   <model-id>    Any Gemini model ID (e.g. gemini-2.5-flash-image)
+
+\x1b[33mAtlas Cloud:\x1b[0m
+  nano-banana "your prompt" --provider atlas
+  Text model: ${ATLAS_TEXT_MODEL}
+  Reference-image model: ${ATLAS_EDIT_MODEL}
+  The current Atlas routes support 1K output only.
 
 \x1b[33mSizes:\x1b[0m
   512   ~512x512   (~$0.045/image on Flash)
@@ -400,8 +416,8 @@ Default: Gemini 3.1 Flash Image Preview (Nano Banana 2)
   nano-banana --costs    Show total spend and per-model breakdown
 
 \x1b[33mAPI Key:\x1b[0m
-  Set GEMINI_API_KEY in your environment, a .env file, or pass --api-key.
-  Get a key at: https://aistudio.google.com/apikey
+  Gemini: set GEMINI_API_KEY or pass --api-key.
+  Atlas: set ATLASCLOUD_API_KEY or pass --api-key.
 `);
     process.exit(0);
   }
@@ -412,6 +428,7 @@ Default: Gemini 3.1 Flash Image Preview (Nano Banana 2)
   }
 
   const options: Options = {
+    provider: "gemini",
     prompt: "",
     output: `nano-gen-${Date.now()}`,
     size: "1K",
@@ -419,7 +436,7 @@ Default: Gemini 3.1 Flash Image Preview (Nano Banana 2)
     referenceImages: [],
     transparent: false,
     apiKey: undefined,
-    model: DEFAULT_MODEL,
+    model: undefined,
     aspectRatio: undefined,
   };
 
@@ -446,7 +463,14 @@ Default: Gemini 3.1 Flash Image Preview (Nano Banana 2)
         process.exit(1);
       }
     } else if (arg === "-m" || arg === "--model") {
-      options.model = resolveModel(args[++i]);
+      options.model = args[++i];
+    } else if (arg === "-p" || arg === "--provider") {
+      const provider = args[++i];
+      if (!PROVIDERS.includes(provider as Provider)) {
+        console.error(`\x1b[31mError:\x1b[0m Invalid provider "${provider}". Valid: ${PROVIDERS.join(", ")}`);
+        process.exit(1);
+      }
+      options.provider = provider as Provider;
     } else if (arg === "-d" || arg === "--dir") {
       options.outputDir = args[++i];
     } else if (arg === "-r" || arg === "--ref") {
@@ -466,6 +490,10 @@ Default: Gemini 3.1 Flash Image Preview (Nano Banana 2)
     process.exit(1);
   }
 
+  if (options.provider === "gemini" && options.model) {
+    options.model = resolveModel(options.model);
+  }
+
   // Warn if 512 is used with Pro model
   if (options.size === "512" && options.model === "gemini-3-pro-image-preview") {
     console.log("\x1b[33mWarning:\x1b[0m 512px resolution is only available on Flash. Switching to 1K.");
@@ -479,7 +507,7 @@ Default: Gemini 3.1 Flash Image Preview (Nano Banana 2)
 // Image generation
 // ---------------------------------------------------------------------------
 
-async function generateImage(options: Options): Promise<string[]> {
+async function generateGeminiImage(options: Options): Promise<string[]> {
   const apiKey = options.apiKey || process.env.GEMINI_API_KEY;
 
   if (!apiKey) {
@@ -506,12 +534,12 @@ async function generateImage(options: Options): Promise<string[]> {
   }
 
   const config = {
-    responseModalities: ["IMAGE", "TEXT"] as const,
+    responseModalities: ["IMAGE", "TEXT"],
     imageConfig,
     tools: [{ googleSearch: {} }],
   };
 
-  const modelName = options.model;
+  const modelName = options.model || DEFAULT_MODEL;
   const shortName = modelName.includes("flash")
     ? "Nano Banana 2 (Flash 3.1)"
     : modelName.includes("pro")
@@ -622,6 +650,37 @@ async function generateImage(options: Options): Promise<string[]> {
   }
 
   return savedFiles;
+}
+
+async function generateImage(options: Options): Promise<string[]> {
+  if (options.provider === "gemini") {
+    return generateGeminiImage(options);
+  }
+
+  const apiKey = options.apiKey || process.env.ATLASCLOUD_API_KEY;
+  if (!apiKey) {
+    throw new Error("ATLASCLOUD_API_KEY is required for the Atlas provider");
+  }
+
+  const model = options.referenceImages.length > 0 ? ATLAS_EDIT_MODEL : ATLAS_TEXT_MODEL;
+  const finalPrompt = options.transparent
+    ? `${options.prompt}. Place the subject on a solid bright green background (#00FF00). The background must be a single flat green color with no gradients, shadows, or variation.`
+    : options.prompt;
+
+  console.log(`\x1b[36m[nano-banana]\x1b[0m Generating image with Atlas Cloud...`);
+  console.log(`\x1b[90mModel: ${model}\x1b[0m`);
+  console.log(`\x1b[90mPrompt: ${options.prompt}\x1b[0m`);
+
+  return generateAtlasImages({
+    apiKey,
+    prompt: finalPrompt,
+    output: options.output,
+    outputDir: options.outputDir,
+    size: options.size,
+    aspectRatio: options.aspectRatio,
+    referenceImages: options.referenceImages,
+    model: options.model,
+  });
 }
 
 // ---------------------------------------------------------------------------

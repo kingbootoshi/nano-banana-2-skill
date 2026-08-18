@@ -1,6 +1,6 @@
 # Nano Banana 2 Skill
 
-AI image generation CLI powered by Gemini 3.1 Flash Image Preview (default) with support for Gemini 3 Pro and any Gemini model. Multi-resolution (512-4K), aspect ratios, cost tracking, broadcast-grade green screen transparency, reference images, and style transfer.
+AI image generation CLI powered by Gemini 3.1 Flash Image Preview (default), with Atlas Cloud available as an optional provider. Multi-resolution (512-4K), aspect ratios, cost tracking, broadcast-grade green screen transparency, reference images, and style transfer.
 
 Also ships as a [Claude Code](https://docs.anthropic.com/en/docs/claude-code) skill for AI-assisted image generation workflows.
 
@@ -27,6 +27,8 @@ echo "GEMINI_API_KEY=your_key_here" > ~/.nano-banana/.env
 Get a Gemini API key at [Google AI Studio](https://aistudio.google.com/apikey).
 
 Now you can use `nano-banana` from anywhere.
+
+To use Atlas Cloud instead, set `ATLASCLOUD_API_KEY` and pass `--provider atlas`. Gemini remains the default.
 
 ### As a Claude Code Skill
 
@@ -80,6 +82,22 @@ nano-banana "your prompt" --model gemini-2.5-flash-image
 |-------|-------|----------|
 | `flash`, `nb2` | Gemini 3.1 Flash Image Preview | Speed, cost, high-volume |
 | `pro`, `nb-pro` | Gemini 3 Pro Image Preview | Highest quality, complex composition |
+
+### Atlas Cloud Provider
+
+Atlas Cloud is opt-in and uses the same CLI workflows for prompts, reference images, aspect ratios, output names, and transparent assets:
+
+```bash
+export ATLASCLOUD_API_KEY=your_key_here
+
+# Text to image
+nano-banana "pixel art treasure chest" --provider atlas -a 1:1
+
+# Edit or combine up to 14 reference images
+nano-banana "combine these styles" --provider atlas -r style1.png -r style2.png
+```
+
+Text prompts use `google/nano-banana-2-lite/text-to-image-developer`; reference images are uploaded temporarily for the generation request and use `google/nano-banana-2-lite/edit-developer`. These Atlas routes currently support `1K` output. Submission is attempted once, prediction polling is bounded, and downloaded output URLs must use a trusted Atlas-controlled HTTPS host.
 
 ### Aspect Ratios
 
@@ -149,10 +167,11 @@ nano-banana "pixel art character, 256x256" -r style.png -r blank-256x256.png -o 
 | `-s, --size` | `1K` | Image size: `512`, `1K`, `2K`, or `4K` |
 | `-a, --aspect` | model default | Aspect ratio: `1:1`, `16:9`, `9:16`, etc. |
 | `-m, --model` | `flash` | Model: `flash`/`nb2`, `pro`/`nb-pro`, or any model ID |
+| `-p, --provider` | `gemini` | Provider: `gemini` or `atlas` |
 | `-d, --dir` | current directory | Output directory |
 | `-r, --ref` | - | Reference image (can use multiple times) |
 | `-t, --transparent` | - | Generate on green screen, remove background (FFmpeg) |
-| `--api-key` | - | Gemini API key (overrides env/file) |
+| `--api-key` | - | Selected provider API key (overrides env/file) |
 | `--costs` | - | Show cost summary from generation history |
 | `-h, --help` | - | Show help |
 
@@ -186,6 +205,8 @@ The CLI resolves the Gemini API key in priority order:
 5. `~/.nano-banana/.env`
 
 Get a free key at [Google AI Studio](https://aistudio.google.com/apikey).
+
+For Atlas Cloud, use `ATLASCLOUD_API_KEY` or `--api-key` with `--provider atlas`. Create a key in the [Atlas Cloud console](https://www.atlascloud.ai/console/api-keys).
 
 ```bash
 # Option 1: Environment variable
